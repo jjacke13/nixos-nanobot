@@ -7,14 +7,14 @@
 
 python3Packages.buildPythonPackage rec {
   pname = "nanobot-ai";
-  version = "0.1.4";
+  version = "0.1.4.post2";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "HKUDS";
     repo = "nanobot";
     rev = "v${version}";
-    hash = "sha256-H5GJaZiTXmPw5dFBis2oRF7QtsJ77xYbwl5cvzlALIs=";
+    hash = "sha256-5UC3U5Z2BfONImsrJMI5gNLXFLLYONcjy4+Bp1EX93A=";
   };
 
   build-system = [
@@ -24,10 +24,10 @@ python3Packages.buildPythonPackage rec {
   # Remove dependencies not in nixpkgs
   postPatch = ''
     substituteInPlace pyproject.toml \
-      --replace-fail '"dingtalk-stream>=0.4.0",' "" \
-      --replace-fail '"lark-oapi>=1.0.0",' "" \
-      --replace-fail '"qq-botpy>=1.0.0",' "" \
-      --replace-fail '"slackify-markdown>=0.2.0",' ""
+      --replace-fail '"dingtalk-stream>=0.24.0,<1.0.0",' "" \
+      --replace-fail '"lark-oapi>=1.5.0,<2.0.0",' "" \
+      --replace-fail '"qq-botpy>=1.2.0,<2.0.0",' "" \
+      --replace-fail '"slackify-markdown>=0.2.0,<1.0.0",' ""
   '';
 
   pythonRelaxDeps = true;
