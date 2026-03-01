@@ -1,0 +1,4 @@
+- [ ] Add HTTPS support for the wizard server
+- [ ] Add password authentication to the wizard
+- [ ] Add more tabs to the wizard (e.g. MCP servers, tools, gateway settings)
+- [ ] Add ready-to-run sd-card images for various cheap boards
