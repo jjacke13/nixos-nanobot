@@ -53,8 +53,6 @@ in
           "WIZARD_PPQ_CREDIT_PATH=${nanobotCfg.dataDir}/ppq-credit.json"
         ];
 
-        # Hardening
-        NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
