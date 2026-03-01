@@ -99,8 +99,6 @@ in
 
         # Set HOME so nanobot finds ~/.nanobot/config.json
         Environment = "HOME=${cfg.dataDir}";
-
-        PrivateTmp = true;
       };
     };
   };
