@@ -53,8 +53,6 @@ in
           "WIZARD_PPQ_CREDIT_PATH=${nanobotCfg.dataDir}/ppq-credit.json"
         ];
 
-        PrivateTmp = true;
-        ReadWritePaths = [ nanobotCfg.dataDir "/run/sudo" ];
       };
     };
   };
