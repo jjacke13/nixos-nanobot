@@ -58,7 +58,7 @@ in
       {
         users = [ cfg.user ];
         commands = [
-          { command = "/run/current-system/sw/bin/systemctl restart nanobot"; options = [ "NOPASSWD" ]; }
+          { command = "/run/current-system/sw/bin/systemctl restart nanobot.service"; options = [ "NOPASSWD" ]; }
         ];
       }
     ];
