@@ -56,7 +56,7 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
-        ReadWritePaths = [ nanobotCfg.dataDir ];
+        ReadWritePaths = [ nanobotCfg.dataDir "/run/sudo" ];
       };
     };
   };
