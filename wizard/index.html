@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nanobot Settings</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body data-theme="light">
+
+<div class="top-bar">
+  <div class="lang-flags" id="langFlags">
+    <button class="lang-flag" data-lang="en" onclick="setLang('en')">&#127468;&#127463;</button>
+    <button class="lang-flag" data-lang="el" onclick="setLang('el')">&#127468;&#127479;</button>
+  </div>
+  <label for="themeSelect" id="themeLabel"></label>
+  <select id="themeSelect" onchange="setTheme(this.value)">
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+    <option value="hacker">Hacker</option>
+  </select>
+</div>
+
+<header>
+  <h1 id="headerTitle"></h1>
+  <p id="headerSub"></p>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+<div id="status" class="status"></div>
+<div id="app"></div>
+
+<!-- i18n and schemas loaded from separate files -->
+<script>const I18N = {};</script>
+<script src="/i18n/en.js"></script>
+<script src="/i18n/el.js"></script>
+<script src="/schemas/models.js"></script>
+<script src="/schemas/telegram.js"></script>
+<script src="/schemas/account.js"></script>
+<script>
+
+let lang = "en";
+function t(key) { return I18N[lang]?.[key] || I18N["en"]?.[key] || key; }
+function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem("nb-lang", l);
+  updateLangFlags();
+  render();
+}
+
+function updateLangFlags() {
+  document.querySelectorAll(".lang-flag").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.lang === lang);
+  });
+}
+
+function setTheme(theme) {
+  document.body.dataset.theme = theme;
+  localStorage.setItem("nb-theme", theme);
+}
+
+// Schema sections: 3-tab dashboard (Provider, Telegram, Account)
+const SECTIONS = [SCHEMA_MODELS, SCHEMA_TELEGRAM, SCHEMA_ACCOUNT];
+
+// =====================================================================
+// Provider-to-config mapping
+// =====================================================================
+const PROVIDER_CONFIG_KEY = {
+  ppq: "custom",
+  openrouter: "openrouter",
+  openai: "openai",
+  anthropic: "anthropic",
+  gemini: "gemini",
+  custom: "custom",
+};
+
+const BARE_MODEL_PROVIDERS = new Set(["ppq", "custom"]);
+
+// =====================================================================
+// State
+// =====================================================================
+let config = {};
+let formState = {};
+let currentTab = 0;
+let fetchedModels = [];
+let modelsFetching = false;
+let customModelMode = false;
+let ppqBalance = null;
+let ppqBalanceLoading = false;
+let ppqBalanceError = false;
+let ppqCreditId = "";
+
+// =====================================================================
+// Init
+// =====================================================================
+async function init() {
+  const savedLang = localStorage.getItem("nb-lang");
+  if (savedLang && I18N[savedLang]) {
+    lang = savedLang;
+  }
+  updateLangFlags();
+  const savedTheme = localStorage.getItem("nb-theme");
+  if (savedTheme) {
+    document.body.dataset.theme = savedTheme;
+    document.getElementById("themeSelect").value = savedTheme;
+  }
+
+  try {
+    const res = await fetch("/api/config");
+    config = await res.json();
+    formState = extractFormState(config);
+    render();
+    fetchModels();
+    if (formState.provider === "ppq") {
+      fetchCreditId().then(() => {
+        if (ppqCreditId) fetchBalance();
+      });
+    }
+  } catch (e) {
+    showStatus(t("loadFail") + e.message, "error");
+  }
+}
+
+function extractFormState(cfg) {
+  const state = {};
+
+  const providers = cfg.providers || {};
+  let detectedProvider = "ppq";
+
+  const custom = providers.custom || {};
+  if ((custom.apiKey || custom.api_key) && custom.apiBase === "https://api.ppq.ai") {
+    detectedProvider = "ppq";
+  } else if (custom.apiKey || custom.api_key) {
+    const base = custom.apiBase || custom.api_base || "";
+    if (base.includes("openrouter.ai")) detectedProvider = "openrouter";
+    else detectedProvider = "custom";
+  } else {
+    for (const name of ["openrouter", "openai", "anthropic", "gemini"]) {
+      const p = providers[name] || {};
+      if (p.apiKey || p.api_key) {
+        detectedProvider = name;
+        break;
+      }
+    }
+  }
+
+  state.provider = detectedProvider;
+
+  const providerField = findField("apiBase");
+  const defaultBase = providerField?.providerDefaults?.[detectedProvider] || "";
+  const configKey = PROVIDER_CONFIG_KEY[detectedProvider];
+  const providerCfg = providers[configKey] || {};
+  state.apiBase = providerCfg.apiBase || providerCfg.api_base || defaultBase;
+  state.apiKey = providerCfg.apiKey || providerCfg.api_key || "";
+
+  const modelStr = cfg.agents?.defaults?.model || "";
+  state.model = modelStr;
+  state.modelString = modelStr;
+
+  const tg = cfg.channels?.telegram || {};
+  state["channels.telegram.enabled"] = tg.enabled ?? false;
+  state["channels.telegram.allowFrom"] = tg.allowFrom?.length ? [...tg.allowFrom]
+    : tg.allow_from?.length ? [...tg.allow_from]
+    : [""];
+  state["channels.telegram.token"] = tg.token || "";
+
+  return state;
+}
+
+// =====================================================================
+// Render
+// =====================================================================
+function render() {
+  document.getElementById("headerTitle").textContent = t("title");
+  document.getElementById("headerSub").textContent = t("subtitle");
+  document.getElementById("themeLabel").textContent = t("themeLabel");
+
+  renderTabs();
+  renderCard();
+}
+
+function renderTabs() {
+  const container = document.getElementById("tabBar");
+  container.innerHTML = "";
+
+  SECTIONS.forEach((sec, i) => {
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (i === currentTab ? " active" : "");
+    btn.textContent = t(sec.stepKey);
+    btn.onclick = () => switchTab(i);
+    container.appendChild(btn);
+  });
+}
+
+function renderCard() {
+  const app = document.getElementById("app");
+  const section = SECTIONS[currentTab];
+
+  app.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="card-header">
+      <h2>${t(section.titleKey)}</h2>
+      <p>${t(section.descKey)}</p>
+    </div>
+  `;
+
+  // Account tab uses custom rendering
+  if (section.renderFn === "renderAccountTab") {
+    card.appendChild(renderAccountContent());
+    app.appendChild(card);
+    return;
+  }
+
+  for (const field of section.fields) {
+    card.appendChild(renderField(field));
+  }
+
+  // Add per-section Save button
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+  actions.innerHTML = `<button class="btn btn-primary" id="saveBtn" onclick="saveSection()">${t("saveApply")}</button>`;
+  card.appendChild(actions);
+
+  app.appendChild(card);
+  updateDerivedFields();
+  updateVisibility();
+  updatePpqButton();
+}
+
+function renderAccountContent() {
+  const wrap = document.createElement("div");
+  const provider = formState.provider || "";
+
+  if (provider !== "ppq") {
+    wrap.innerHTML = `<div class="balance-message">${escHtml(t("ppq.notPpq"))}</div>`;
+    return wrap;
+  }
+
+  // No credentials yet — show register button
+  if (!ppqCreditId.trim()) {
+    wrap.innerHTML = `
+      <div class="balance-message">${escHtml(t("ppq.noCreditId"))}</div>
+      <div style="text-align:center">
+        <button type="button" class="btn btn-primary ppq-register-btn" onclick="registerPpqFromAccount()">${escHtml(t("ppq.register"))}</button>
+        <div class="help">${t("ppq.register.help")}</div>
+      </div>
+    `;
+    return wrap;
+  }
+
+  // Show read-only credit ID
+  const creditField = document.createElement("div");
+  creditField.className = "field";
+  creditField.innerHTML = `
+    <label>${escHtml(t("ppq.creditId"))}</label>
+    <input type="text" value="${escHtml(ppqCreditId)}" readonly>
+    <div class="help-row">
+      <div class="help">${t("ppq.creditId.info")}</div>
+      <button type="button" class="help-btn" onclick="showCreditHelp()" title="${escHtml(t("ppq.creditId.showGuide"))}">?</button>
+    </div>
+  `;
+  wrap.appendChild(creditField);
+
+  // Balance display area
+  const balanceArea = document.createElement("div");
+  balanceArea.style.marginTop = "24px";
+
+  if (ppqBalanceLoading) {
+    balanceArea.innerHTML = `<div class="balance-message">${escHtml(t("ppq.balanceLoading"))}</div>`;
+  } else if (ppqBalanceError) {
+    balanceArea.innerHTML = `
+      <div class="balance-message">${escHtml(t("ppq.balanceError"))}</div>
+      <div style="text-align:center">
+        <a href="https://ppq.ai/account-activity" target="_blank" rel="noopener noreferrer" class="balance-link">${escHtml(t("ppq.topUp"))}</a>
+      </div>
+    `;
+  } else if (ppqBalance !== null) {
+    const amount = typeof ppqBalance === "number" ? ppqBalance.toFixed(2) : ppqBalance;
+    balanceArea.innerHTML = `
+      <div class="balance-card">
+        <div class="balance-label">${escHtml(t("ppq.balanceLabel"))}</div>
+        <div class="balance-amount">$${escHtml(String(amount))}</div>
+        <a href="https://ppq.ai/account-activity" target="_blank" rel="noopener noreferrer" class="balance-link">${escHtml(t("ppq.topUp"))}</a>
+      </div>
+    `;
+  }
+
+  wrap.appendChild(balanceArea);
+  return wrap;
+}
+
+async function registerPpqFromAccount() {
+  const btn = document.querySelector(".ppq-register-btn");
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> ${escHtml(t("ppq.registering"))}`;
+
+  try {
+    const res = await fetch("/api/ppq/register", { method: "POST" });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showStatus(t("ppq.fail") + (data.error || ""), "error");
+      btn.disabled = false;
+      btn.textContent = t("ppq.register");
+      return;
+    }
+
+    ppqCreditId = data.credit_id || "";
+    const msg = data.existing ? t("ppq.successExisting") : t("ppq.success");
+    showStatus(msg, "success");
+
+    // Fetch balance and re-render
+    if (ppqCreditId) fetchBalance();
+    renderCard();
+  } catch (e) {
+    showStatus(t("ppq.fail") + e.message, "error");
+    btn.disabled = false;
+    btn.textContent = t("ppq.register");
+  }
+}
+
+function showCreditHelp() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal-content">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <div style="font-weight:600;font-size:1.05em;margin-bottom:8px">${escHtml(t("ppq.creditId.guideTitle"))}</div>
+      <div class="help" style="margin-bottom:4px">${t("ppq.creditId.info")}</div>
+      <img src="/ppq.png" alt="PPQ Credit ID guide">
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function fetchCreditId() {
+  try {
+    const res = await fetch("/api/ppq/credit");
+    if (res.ok) {
+      const data = await res.json();
+      ppqCreditId = data.credit_id || "";
+    }
+  } catch (e) {
+    // ignore — field stays empty
+  }
+}
+
+async function fetchBalance() {
+  ppqBalanceLoading = true;
+  ppqBalanceError = false;
+  if (SECTIONS[currentTab]?.id === "account") renderCard();
+
+  try {
+    const res = await fetch("/api/ppq/balance");
+    if (res.ok) {
+      const data = await res.json();
+      ppqBalance = data.balance ?? data.amount ?? data.credits ?? null;
+      if (ppqBalance === null && typeof data === "object") {
+        for (const v of Object.values(data)) {
+          if (typeof v === "number") { ppqBalance = v; break; }
+        }
+      }
+      ppqBalanceError = ppqBalance === null;
+    } else {
+      ppqBalanceError = true;
+    }
+  } catch (e) {
+    ppqBalanceError = true;
+  }
+
+  ppqBalanceLoading = false;
+  if (SECTIONS[currentTab]?.id === "account") renderCard();
+}
+
+function renderField(field) {
+  const div = document.createElement("div");
+  div.className = "field";
+  div.dataset.key = field.key;
+
+  const labelText = t(field.labelKey);
+  const helpText = t(field.helpKey);
+  const placeholder = field.placeholderKey ? t(field.placeholderKey) : (field.placeholder || "");
+
+  if (field.type === "guide") {
+    const stepsHtml = field.steps.map((stepKey, i) => `
+      <div class="guide-step">
+        <div class="guide-num">${i + 1}</div>
+        <div class="guide-text">${t(stepKey)}</div>
+      </div>
+    `).join("");
+    div.innerHTML = `
+      <div class="guide">
+        <div class="guide-title">${t(field.titleKey)}</div>
+        ${stepsHtml}
+      </div>
+    `;
+    return div;
+  }
+
+  if (field.type === "toggle") {
+    const checked = formState[field.key] ? "checked" : "";
+    div.innerHTML = `
+      <div class="toggle-wrap">
+        <label class="toggle">
+          <input type="checkbox" ${checked} onchange="onToggle('${field.key}', this.checked)">
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label">${labelText}</span>
+      </div>
+      <div class="help">${helpText}</div>
+    `;
+  } else if (field.type === "select") {
+    const opts = (field.options || []).map(o => {
+      const sel = String(formState[field.key]) === String(o.value) ? "selected" : "";
+      return `<option value="${o.value}" ${sel}>${t(o.labelKey)}</option>`;
+    }).join("");
+    div.innerHTML = `
+      <label>${labelText}</label>
+      <select onchange="onSelect('${field.key}', this.value)">${opts}</select>
+      <div class="help">${helpText}</div>
+    `;
+  } else if (field.type === "model-select") {
+    div.innerHTML = `
+      <label>${labelText}</label>
+      <div class="model-select-wrap"></div>
+      <div class="help">${helpText}</div>
+    `;
+    updateModelSelect(div, field);
+  } else if (field.type === "multi-text") {
+    const items = Array.isArray(formState[field.key]) ? formState[field.key] : [""];
+    const rows = items.map((val, i) => `
+      <div class="multi-row">
+        <input type="text" value="${escHtml(val)}" placeholder="${escHtml(placeholder)}"
+               oninput="onMultiInput('${field.key}', ${i}, this.value)">
+        ${items.length > 1 ? `<button type="button" class="multi-remove" onclick="onMultiRemove('${field.key}', ${i})">&#215;</button>` : ""}
+      </div>
+    `).join("");
+    div.innerHTML = `
+      <label>${labelText}</label>
+      <div class="multi-inputs">
+        ${rows}
+        <button type="button" class="multi-add" onclick="onMultiAdd('${field.key}')">+</button>
+      </div>
+      <div class="help">${helpText}</div>
+    `;
+  } else if (field.type === "auto") {
+    div.innerHTML = `
+      <label>${labelText}</label>
+      <input type="text" value="${escHtml(formState[field.key] || '')}" readonly>
+      <div class="help">${helpText}</div>
+    `;
+  } else {
+    const val = formState[field.key] || "";
+    div.innerHTML = `
+      <label>${labelText}</label>
+      <input type="${field.type}" value="${escHtml(val)}" placeholder="${escHtml(placeholder)}"
+             oninput="onInput('${field.key}', this.value)">
+      <div class="help">${helpText}</div>
+    `;
+  }
+
+  return div;
+}
+
+function updateModelSelect(container, field) {
+  const wrap = container.querySelector(".model-select-wrap");
+  if (!wrap) return;
+  const provider = formState.provider || "";
+  const current = formState[field.key] || "";
+
+  if (modelsFetching) {
+    wrap.innerHTML = `<select disabled><option>${escHtml(t("modelsLoading"))}</option></select>`;
+    return;
+  }
+
+  const fallback = (field.fallbackModels && field.fallbackModels[provider]) || [];
+  const models = fetchedModels.length > 0 ? fetchedModels : fallback;
+
+  const nameMap = {};
+  for (const fb of fallback) { nameMap[fb.id] = fb.name; }
+
+  if (!models.length && !provider) {
+    wrap.innerHTML = `<div style="color:var(--text-muted);font-size:0.9em">${t("selectProvider")}</div>`;
+    return;
+  }
+
+  const isCustomValue = customModelMode || (current && !models.some(m => m.id === current));
+  let html = `<select onchange="onModelSelectChange(this.value)">`;
+  if (!current && !isCustomValue) {
+    html += `<option value="" selected disabled>${escHtml(t("selectModel"))}</option>`;
+  }
+  for (const m of models) {
+    const sel = !isCustomValue && m.id === current ? "selected" : "";
+    const label = nameMap[m.id] || m.name || m.id;
+    html += `<option value="${escHtml(m.id)}" ${sel}>${escHtml(label)}</option>`;
+  }
+  html += `<option value="__custom__" ${isCustomValue ? "selected" : ""}>${escHtml(t("opt.customModel"))}</option>`;
+  html += `</select>`;
+
+  if (isCustomValue) {
+    html += `<input type="text" value="${escHtml(current)}" placeholder="${escHtml(t("customModelPlaceholder"))}" oninput="onCustomModelInput(this.value)" style="margin-top:8px">`;
+  }
+
+  wrap.innerHTML = html;
+}
+
+async function fetchModels() {
+  const provider = formState.provider || "";
+  const providerField = findField("apiBase");
+  const baseUrl = formState.apiBase || providerField?.providerDefaults?.[provider] || "";
+  if (!baseUrl) {
+    fetchedModels = [];
+    refreshModelSelect();
+    return;
+  }
+
+  modelsFetching = true;
+  refreshModelSelect();
+
+  try {
+    const params = new URLSearchParams();
+    params.set("baseUrl", baseUrl);
+    const apiKey = formState.apiKey || "";
+    if (apiKey) params.set("apiKey", apiKey);
+    const res = await fetch(`/api/models?${params}`);
+    if (res.ok) {
+      const data = await res.json();
+      fetchedModels = data.models || [];
+    } else {
+      fetchedModels = [];
+    }
+  } catch (e) {
+    fetchedModels = [];
+  }
+
+  modelsFetching = false;
+  refreshModelSelect();
+}
+
+function refreshModelSelect() {
+  const field = findField("model");
+  if (!field) return;
+  const container = document.querySelector('[data-key="model"]');
+  if (container) updateModelSelect(container, field);
+}
+
+// =====================================================================
+// Navigation
+// =====================================================================
+function switchTab(index) {
+  currentTab = Math.max(0, Math.min(index, SECTIONS.length - 1));
+  document.getElementById("status").className = "status";
+  renderTabs();
+  renderCard();
+  // Reload credit_id from disk when switching to Account tab with PPQ
+  if (SECTIONS[currentTab]?.id === "account" && formState.provider === "ppq") {
+    fetchCreditId().then(() => {
+      if (ppqCreditId && ppqBalance === null) fetchBalance();
+      renderCard();
+    });
+  }
+}
+
+// =====================================================================
+// Event handlers
+// =====================================================================
+function onInput(key, value) {
+  formState[key] = value;
+  if (key === "apiKey") updatePpqButton();
+}
+
+function onMultiInput(key, index, value) {
+  if (!Array.isArray(formState[key])) formState[key] = [""];
+  formState[key][index] = value;
+}
+
+function onMultiAdd(key) {
+  if (!Array.isArray(formState[key])) formState[key] = [""];
+  formState[key].push("");
+  rerenderField(key);
+  setTimeout(() => {
+    const rows = document.querySelectorAll(`[data-key="${key}"] .multi-row input`);
+    if (rows.length) rows[rows.length - 1].focus();
+  }, 50);
+}
+
+function onMultiRemove(key, index) {
+  if (!Array.isArray(formState[key])) return;
+  formState[key].splice(index, 1);
+  if (formState[key].length === 0) formState[key] = [""];
+  rerenderField(key);
+}
+
+function rerenderField(key) {
+  const el = document.querySelector(`[data-key="${key}"]`);
+  const field = findField(key);
+  if (el && field) {
+    const newEl = renderField(field);
+    el.replaceWith(newEl);
+    updateVisibility();
+  }
+}
+
+function onSelect(key, value) {
+  formState[key] = value;
+
+  if (key === "provider") {
+    onProviderChange(value);
+  }
+  updateDerivedFields();
+  updateVisibility();
+}
+
+function onToggle(key, checked) {
+  formState[key] = checked;
+  updateVisibility();
+}
+
+function onModelSelectChange(value) {
+  const key = "model";
+  if (value === "__custom__") {
+    customModelMode = true;
+    formState[key] = "";
+    refreshModelSelect();
+    setTimeout(() => {
+      const input = document.querySelector('[data-key="model"] input[type="text"]');
+      if (input) input.focus();
+    }, 50);
+  } else {
+    customModelMode = false;
+    formState[key] = value;
+    refreshModelSelect();
+  }
+  updateDerivedFields();
+}
+
+function onCustomModelInput(value) {
+  formState.model = value;
+  updateDerivedFields();
+}
+
+function onProviderChange(provider) {
+  for (const sec of SECTIONS) {
+    for (const field of (sec.fields || [])) {
+      if (field.providerDefaults && field.providerDefaults[provider] !== undefined) {
+        formState[field.key] = field.providerDefaults[provider];
+        const input = document.querySelector(`[data-key="${field.key}"] input, [data-key="${field.key}"] select`);
+        if (input) input.value = field.providerDefaults[provider];
+      }
+    }
+  }
+  formState.model = "";
+  fetchedModels = [];
+  customModelMode = false;
+  // Reset balance/credit state when provider changes
+  ppqBalance = null;
+  ppqBalanceError = false;
+  ppqCreditId = "";
+  fetchModels();
+  updateDerivedFields();
+  updatePpqButton();
+}
+
+function updatePpqButton() {
+  document.querySelectorAll(".ppq-register-wrap").forEach(el => el.remove());
+
+  const provider = formState.provider || "";
+  const apiKey = formState.apiKey || "";
+  if (provider !== "ppq" || apiKey.trim()) return;
+
+  const fieldEl = document.querySelector('[data-key="apiKey"]');
+  if (!fieldEl) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "ppq-register-wrap";
+  wrap.innerHTML = `
+    <button type="button" class="btn btn-primary ppq-register-btn" onclick="registerPpq()">
+      ${escHtml(t("ppq.register"))}
+    </button>
+    <div class="help">${t("ppq.register.help")}</div>
+  `;
+  fieldEl.appendChild(wrap);
+}
+
+async function registerPpq() {
+  const btn = document.querySelector(".ppq-register-btn");
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> ${escHtml(t("ppq.registering"))}`;
+
+  try {
+    const res = await fetch("/api/ppq/register", { method: "POST" });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showStatus(t("ppq.fail") + (data.error || ""), "error");
+      btn.disabled = false;
+      btn.textContent = t("ppq.register");
+      return;
+    }
+
+    formState.apiKey = data.api_key;
+    const input = document.querySelector('[data-key="apiKey"] input');
+    if (input) input.value = data.api_key;
+
+    document.querySelectorAll(".ppq-register-wrap").forEach(el => el.remove());
+    fetchModels();
+
+    const msg = data.existing ? t("ppq.successExisting") : t("ppq.success");
+    showStatusHtml(msg + ` <a href="https://ppq.ai/account-activity" target="_blank" rel="noopener noreferrer">${escHtml(t("ppq.creditLink"))}</a>`, "success");
+  } catch (e) {
+    showStatus(t("ppq.fail") + e.message, "error");
+    btn.disabled = false;
+    btn.textContent = t("ppq.register");
+  }
+}
+
+function updateDerivedFields() {
+  const provider = formState.provider || "";
+  const model = formState.model || "";
+
+  if (BARE_MODEL_PROVIDERS.has(provider)) {
+    formState.modelString = model;
+  } else if (provider && model) {
+    if (model.includes("/")) {
+      formState.modelString = model;
+    } else {
+      formState.modelString = `${provider}/${model}`;
+    }
+  } else {
+    formState.modelString = "";
+  }
+
+  const el = document.querySelector('[data-key="modelString"] input');
+  if (el) el.value = formState.modelString;
+}
+
+function updateVisibility() {
+  const section = SECTIONS[currentTab];
+  for (const field of (section.fields || [])) {
+    if (field.showWhen) {
+      const el = document.querySelector(`[data-key="${field.key}"]`);
+      if (el) {
+        el.classList.toggle("hidden", formState[field.showWhen.key] !== field.showWhen.value);
+      }
+    }
+    if (field.hideWhen) {
+      const el = document.querySelector(`[data-key="${field.key}"]`);
+      if (el) {
+        el.classList.toggle("hidden", formState[field.hideWhen.key] === field.hideWhen.value);
+      }
+    }
+  }
+}
+
+function findField(key) {
+  for (const sec of SECTIONS) {
+    for (const f of (sec.fields || [])) {
+      if (f.key === key) return f;
+    }
+  }
+  return null;
+}
+
+// =====================================================================
+// Validation
+// =====================================================================
+const BOT_TOKEN_RE = /^\d{8,10}:[A-Za-z0-9_-]{30,50}$/;
+const USER_ID_RE = /^\d{5,13}$/;
+
+function isRedacted(val) {
+  return typeof val === "string" && val.includes("****");
+}
+
+function getTabErrors(tabIndex) {
+  const errors = [];
+  const sectionId = SECTIONS[tabIndex].id;
+
+  if (sectionId === "models") {
+    const provider = formState.provider || "";
+    const apiKey = formState.apiKey || "";
+    if (provider !== "ppq" && !apiKey.trim()) {
+      errors.push({ key: "apiKey", msg: t("val.apiKeyRequired") });
+    }
+    const model = formState.model || "";
+    if (!model) {
+      errors.push({ key: "model", msg: t("val.modelRequired") });
+    }
+  }
+
+  if (sectionId === "channels" && formState["channels.telegram.enabled"]) {
+    const token = formState["channels.telegram.token"] || "";
+    if (!token.trim()) {
+      errors.push({ key: "channels.telegram.token", msg: t("val.tgTokenRequired") });
+    } else if (!isRedacted(token) && !BOT_TOKEN_RE.test(token.trim())) {
+      errors.push({ key: "channels.telegram.token", msg: t("val.tgTokenFormat") });
+    }
+    const allowFrom = formState["channels.telegram.allowFrom"] || [];
+    for (const uid of allowFrom) {
+      if (uid.trim() && !USER_ID_RE.test(uid.trim())) {
+        errors.push({ key: "channels.telegram.allowFrom", msg: t("val.tgUserIdFormat") });
+        break;
+      }
+    }
+  }
+
+  return errors;
+}
+
+function showFieldErrors(errors) {
+  document.querySelectorAll(".field.invalid").forEach(el => el.classList.remove("invalid"));
+  document.querySelectorAll(".field-error").forEach(el => el.remove());
+  for (const err of errors) {
+    const fieldEl = document.querySelector(`[data-key="${err.key}"]`);
+    if (fieldEl) {
+      fieldEl.classList.add("invalid");
+      const errDiv = document.createElement("div");
+      errDiv.className = "field-error";
+      errDiv.textContent = err.msg;
+      fieldEl.appendChild(errDiv);
+    }
+  }
+}
+
+function validateTab(tabIndex) {
+  const errors = getTabErrors(tabIndex);
+  showFieldErrors(errors);
+  return errors.length === 0;
+}
+
+// =====================================================================
+// Save (per-section)
+// =====================================================================
+async function saveSection() {
+  if (!validateTab(currentTab)) {
+    return;
+  }
+
+  const btn = document.getElementById("saveBtn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> ${t("saving")}`;
+
+  try {
+    const output = buildConfig();
+    const res = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(output),
+    });
+    const result = await res.json();
+
+    if (result.success) {
+      showStatus(t("savedOk"), "success");
+    } else if (result.errors) {
+      showStatus(t("val.serverErrors") + " " + result.errors.join("; "), "error");
+    } else {
+      showStatus(t("savedFail") + (result.message || ""), "error");
+    }
+  } catch (e) {
+    showStatus(t("saveFail") + e.message, "error");
+  }
+
+  btn.disabled = false;
+  btn.textContent = t("saveApply");
+}
+
+function buildConfig() {
+  const provider = formState.provider || "ppq";
+  const configProviderKey = PROVIDER_CONFIG_KEY[provider];
+  const apiKey = formState.apiKey || "";
+  const apiBase = formState.apiBase || "";
+  const modelString = formState.modelString || "";
+  const token = formState["channels.telegram.token"] || "";
+
+  const tgConfig = {
+    enabled: formState["channels.telegram.enabled"] || false,
+    allowFrom: (formState["channels.telegram.allowFrom"] || []).filter(v => v.trim()),
+  };
+  if (!isRedacted(token)) {
+    tgConfig.token = token;
+  }
+
+  const output = {
+    providers: {},
+    agents: {
+      defaults: {
+        model: modelString,
+      },
+    },
+    channels: {
+      telegram: tgConfig,
+    },
+  };
+
+  const providerConfig = {
+    enabled: true,
+  };
+  if (!isRedacted(apiKey)) {
+    providerConfig.apiKey = apiKey;
+  }
+  if (apiBase) {
+    providerConfig.apiBase = apiBase;
+  }
+  output.providers[configProviderKey] = providerConfig;
+
+  return output;
+}
+
+function showStatus(message, type) {
+  const el = document.getElementById("status");
+  el.textContent = message;
+  el.className = "status " + type;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (type === "success") {
+    setTimeout(() => { el.className = "status"; }, 5000);
+  }
+}
+
+function showStatusHtml(html, type) {
+  const el = document.getElementById("status");
+  el.innerHTML = html;
+  el.className = "status " + type;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (type === "success") {
+    setTimeout(() => { el.className = "status"; }, 8000);
+  }
+}
+
+// =====================================================================
+// Start
+// =====================================================================
+init();
+</script>
+</body>
+</html>
