@@ -179,7 +179,7 @@ def restart_nanobot():
     """Restart the nanobot service."""
     try:
         subprocess.run(
-            ["sudo", "/run/current-system/sw/bin/systemctl", "restart", "nanobot.service"],
+            ["/run/wrappers/bin/sudo", "/run/current-system/sw/bin/systemctl", "restart", "nanobot.service"],
             check=True,
             capture_output=True,
             timeout=30,
@@ -188,7 +188,7 @@ def restart_nanobot():
     except subprocess.CalledProcessError as e:
         return False, f"Failed to restart: {e.stderr.decode()}"
     except FileNotFoundError:
-        return False, "systemctl not found. Are you running on NixOS?"
+        return False, "sudo or systemctl not found. Are you running on NixOS?"
 
 
 class WizardHandler(BaseHTTPRequestHandler):
@@ -286,6 +286,21 @@ class WizardHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, ValueError):
             self._send_json(400, {"error": "Invalid JSON"})
             return
+
+        # For PPQ provider: inject the API key from ppq-credit.json
+        # (the apiKey field is hidden in the UI for PPQ)
+        custom_provider = data.get("providers", {}).get("custom", {})
+        if custom_provider.get("apiBase") == "https://api.ppq.ai" or (
+            custom_provider and not custom_provider.get("apiKey")
+        ):
+            try:
+                with open(PPQ_CREDIT_PATH, "r") as f:
+                    credit = json.load(f)
+                ppq_key = credit.get("api_key", "")
+                if ppq_key and "custom" in data.get("providers", {}):
+                    data["providers"]["custom"]["apiKey"] = ppq_key
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
 
         # Merge with existing config to preserve fields not in the form
         existing = read_config()
