@@ -28,7 +28,9 @@
     };
 
     nixosModules = {
-     ## To be added 
+      nanobot = import ./module.nix { inherit self; };
+      nanobot-wizard = import ./wizard-module.nix { inherit self; };
+      default = self.nixosModules.nanobot;
     };
     
     nixosConfigurations= {
