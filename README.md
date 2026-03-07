@@ -18,7 +18,7 @@ This flake provides two NixOS modules: `nanobot` and `nanobot-wizard`.
 ```nix
 # flake.nix
 {
-  inputs.nixos-nanobot.url = "github:youruser/nixos-nanobot";
+  inputs.nixos-nanobot.url = "github:jjacke13/nixos-nanobot";
 
   outputs = { nixos-nanobot, ... }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
