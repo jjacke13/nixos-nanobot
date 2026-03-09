@@ -7,14 +7,14 @@
 
 python3Packages.buildPythonPackage rec {
   pname = "nanobot-ai";
-  version = "0.1.4.post3";
+  version = "0.1.4.post4";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "HKUDS";
     repo = "nanobot";
     rev = "v${version}";
-    hash = "sha256-GjuQOm3oQLlBy/V1j9RuHRM4LSHnSaAqaw/Vho5pjkM=";
+    hash = "sha256-cyw60zDQUePgKseeTZMMw5RaQnprrdQ7A1iZy3GSLHg=";
   };
 
   build-system = [
