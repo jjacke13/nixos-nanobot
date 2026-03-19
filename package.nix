@@ -7,14 +7,14 @@
 
 python3Packages.buildPythonPackage rec {
   pname = "nanobot-ai";
-  version = "0.1.4.post4";
+  version = "0.1.4.post5";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "HKUDS";
     repo = "nanobot";
     rev = "v${version}";
-    hash = "sha256-cyw60zDQUePgKseeTZMMw5RaQnprrdQ7A1iZy3GSLHg=";
+    hash = "sha256-tz5FdPv0AGAM3OANHq+yGQ58SFgjJ5HDdD63ZU8Ml1k=";
   };
 
   build-system = [
@@ -27,7 +27,11 @@ python3Packages.buildPythonPackage rec {
       --replace-fail '"dingtalk-stream>=0.24.0,<1.0.0",' "" \
       --replace-fail '"lark-oapi>=1.5.0,<2.0.0",' "" \
       --replace-fail '"qq-botpy>=1.2.0,<2.0.0",' "" \
-      --replace-fail '"slackify-markdown>=0.2.0,<1.0.0",' ""
+      --replace-fail '"slackify-markdown>=0.2.0,<1.0.0",' "" \
+      --replace-fail '"ddgs>=9.5.5,<10.0.0",' "" \
+      --replace-fail '"chardet>=3.0.2,<6.0.0",' "" \
+      --replace-fail '"openai>=2.8.0",' "" \
+      --replace-fail '"tiktoken>=0.12.0,<1.0.0",' ""
   '';
 
   pythonRelaxDeps = true;
@@ -69,6 +73,7 @@ python3Packages.buildPythonPackage rec {
     # Note: Patched out (not in nixpkgs):
     # - dingtalk-stream, lark-oapi, qq-botpy (Chinese platforms)
     # - slackify-markdown (Slack formatting)
+    # - ddgs (DuckDuckGo search), chardet, openai, tiktoken
   ];
 
   # Skip tests for now - they require network access
