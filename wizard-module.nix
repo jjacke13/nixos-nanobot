@@ -51,6 +51,7 @@ in
           "WIZARD_PORT=${toString cfg.port}"
           "WIZARD_CONFIG_PATH=${cfg.configPath}"
           "WIZARD_PPQ_CREDIT_PATH=${nanobotCfg.dataDir}/ppq-credit.json"
+          "WIZARD_WORKSPACE_PATH=${nanobotCfg.dataDir}/workspace"
         ];
 
       };
