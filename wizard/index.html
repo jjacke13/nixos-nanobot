@@ -619,6 +619,14 @@ function onSelect(key, value) {
 
   if (key === "provider") {
     onProviderChange(value);
+  } else if (key === "search.provider") {
+    if (value === "tavily") {
+      formState["search.baseUrl"] = "https://api.tavily.com/search";
+    } else {
+      formState["search.baseUrl"] = "";
+    }
+    const input = document.querySelector('[data-key="search.baseUrl"] input');
+    if (input) input.value = formState["search.baseUrl"];
   }
   updateDerivedFields();
   updateVisibility();
