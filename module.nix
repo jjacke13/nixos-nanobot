@@ -70,11 +70,12 @@ in
       wantedBy = [ "multi-user.target" ];
 
       preStart = ''
-        # First run: let onboard create workspace files, then replace config with ours
+        # First run: place our config first so onboard uses our workspace path
         if [ ! -f ${cfg.dataDir}/.nanobot/.onboarded ]; then
-          ${cfg.package}/bin/nanobot onboard
+          mkdir -p ${cfg.dataDir}/.nanobot
           cp ${defaultConfig} ${cfg.dataDir}/.nanobot/config.json
           chmod 600 ${cfg.dataDir}/.nanobot/config.json
+          ${cfg.package}/bin/nanobot onboard
           touch ${cfg.dataDir}/.nanobot/.onboarded
         fi
       '';
