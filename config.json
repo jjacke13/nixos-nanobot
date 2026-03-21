@@ -1,7 +1,7 @@
 {
   "agents": {
     "defaults": {
-      "workspace": "",
+      "workspace": "~/workspace",
       "model": "",
       "provider": "custom",
       "maxTokens": 8192,
