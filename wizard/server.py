@@ -37,6 +37,11 @@ PPQ_CREDIT_PATH = os.environ.get(
     "WIZARD_PPQ_CREDIT_PATH",
     "/var/lib/nanobot/ppq-credit.json",
 )
+WORKSPACE_PATH = os.environ.get(
+    "WIZARD_WORKSPACE_PATH",
+    "/var/lib/nanobot/workspace",
+)
+USER_MD_PATH = os.path.join(WORKSPACE_PATH, "USER.md")
 PPQ_API_URL = "https://api.ppq.ai"
 
 # Keys whose values should be redacted in GET /api/config
@@ -199,6 +204,8 @@ class WizardHandler(BaseHTTPRequestHandler):
             self._serve_index()
         elif self.path == "/api/config":
             self._handle_get_config()
+        elif self.path == "/api/user-md":
+            self._handle_get_user_md()
         elif self.path == "/api/ppq/balance":
             self._handle_ppq_balance()
         elif self.path == "/api/ppq/credit":
@@ -219,6 +226,8 @@ class WizardHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/config":
             self._handle_save()
+        elif self.path == "/api/user-md":
+            self._handle_save_user_md()
         elif self.path == "/api/ppq/register":
             self._handle_ppq_register()
         else:
@@ -407,6 +416,45 @@ class WizardHandler(BaseHTTPRequestHandler):
             "credit_id": credit_id,
             "existing": False,
         })
+
+    def _handle_get_user_md(self):
+        """Return the contents of USER.md."""
+        try:
+            with open(USER_MD_PATH, "r") as f:
+                content = f.read()
+            self._send_json(200, {"content": content})
+        except FileNotFoundError:
+            self._send_json(200, {"content": ""})
+
+    def _handle_save_user_md(self):
+        """Save new contents to USER.md."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > self.MAX_BODY:
+                self._send_json(413, {"error": "Request too large"})
+                return
+            body = self.rfile.read(length)
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON"})
+            return
+
+        content = data.get("content", "")
+        workspace_dir = os.path.dirname(USER_MD_PATH)
+        if workspace_dir:
+            os.makedirs(workspace_dir, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=workspace_dir or ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            os.rename(tmp_path, USER_MD_PATH)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
+            raise
+        self._send_json(200, {"success": True})
 
     def _handle_ppq_balance(self):
         """Return the PPQ credit balance using credit_id from ppq-credit.json."""
