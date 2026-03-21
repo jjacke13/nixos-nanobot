@@ -37,6 +37,7 @@
 <script src="/schemas/models.js"></script>
 <script src="/schemas/telegram.js"></script>
 <script src="/schemas/search.js"></script>
+<script src="/schemas/user.js"></script>
 <script src="/schemas/account.js"></script>
 <script>
 
@@ -63,7 +64,7 @@ function setTheme(theme) {
 }
 
 // Schema sections: 3-tab dashboard (Provider, Telegram, Account)
-const SECTIONS = [SCHEMA_MODELS, SCHEMA_TELEGRAM, SCHEMA_SEARCH, SCHEMA_ACCOUNT];
+const SECTIONS = [SCHEMA_MODELS, SCHEMA_TELEGRAM, SCHEMA_SEARCH, SCHEMA_USER, SCHEMA_ACCOUNT];
 
 // =====================================================================
 // Provider-to-config mapping
@@ -88,6 +89,7 @@ let currentTab = 0;
 let fetchedModels = [];
 let modelsFetching = false;
 let customModelMode = false;
+let userMdContent = null;
 let ppqBalance = null;
 let ppqBalanceLoading = false;
 let ppqBalanceError = false;
@@ -215,7 +217,13 @@ function renderCard() {
     </div>
   `;
 
-  // Account tab uses custom rendering
+  // Custom rendered tabs
+  if (section.renderFn === "renderUserTab") {
+    card.appendChild(renderUserContent());
+    app.appendChild(card);
+    if (userMdContent === null) fetchUserMd();
+    return;
+  }
   if (section.renderFn === "renderAccountTab") {
     card.appendChild(renderAccountContent());
     app.appendChild(card);
@@ -344,6 +352,65 @@ function showCreditHelp() {
     </div>
   `;
   document.body.appendChild(overlay);
+}
+
+// =====================================================================
+// User Profile tab
+// =====================================================================
+function renderUserContent() {
+  const wrap = document.createElement("div");
+  const content = userMdContent ?? "";
+  wrap.innerHTML = `
+    <div class="field">
+      <textarea id="userMdEditor" rows="20" style="width:100%;font-family:monospace;resize:vertical">${escHtml(content)}</textarea>
+    </div>
+    <div class="card-actions">
+      <button class="btn btn-primary" id="userSaveBtn" onclick="saveUserMd()">${escHtml(t("user.save"))}</button>
+    </div>
+  `;
+  return wrap;
+}
+
+async function fetchUserMd() {
+  try {
+    const res = await fetch("/api/user-md");
+    if (res.ok) {
+      const data = await res.json();
+      userMdContent = data.content || "";
+      const editor = document.getElementById("userMdEditor");
+      if (editor) editor.value = userMdContent;
+    }
+  } catch (e) {
+    showStatus(t("user.loadError") + e.message, "error");
+  }
+}
+
+async function saveUserMd() {
+  const editor = document.getElementById("userMdEditor");
+  if (!editor) return;
+  const btn = document.getElementById("userSaveBtn");
+  btn.disabled = true;
+  btn.textContent = t("user.saving");
+
+  try {
+    const res = await fetch("/api/user-md", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: editor.value }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      userMdContent = editor.value;
+      showStatus(t("user.saveOk"), "success");
+    } else {
+      showStatus(t("user.saveFail") + (data.error || ""), "error");
+    }
+  } catch (e) {
+    showStatus(t("user.saveFail") + e.message, "error");
+  }
+
+  btn.disabled = false;
+  btn.textContent = t("user.save");
 }
 
 async function fetchCreditId() {
