@@ -75,7 +75,7 @@ in
           mkdir -p ${cfg.dataDir}/.nanobot
           cp ${defaultConfig} ${cfg.dataDir}/.nanobot/config.json
           chmod 600 ${cfg.dataDir}/.nanobot/config.json
-          ${cfg.package}/bin/nanobot onboard
+          echo "N" | ${cfg.package}/bin/nanobot onboard
           touch ${cfg.dataDir}/.nanobot/.onboarded
         fi
       '';
