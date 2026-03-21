@@ -36,6 +36,7 @@
 <script src="/i18n/el.js"></script>
 <script src="/schemas/models.js"></script>
 <script src="/schemas/telegram.js"></script>
+<script src="/schemas/search.js"></script>
 <script src="/schemas/account.js"></script>
 <script>
 
@@ -62,7 +63,7 @@ function setTheme(theme) {
 }
 
 // Schema sections: 3-tab dashboard (Provider, Telegram, Account)
-const SECTIONS = [SCHEMA_MODELS, SCHEMA_TELEGRAM, SCHEMA_ACCOUNT];
+const SECTIONS = [SCHEMA_MODELS, SCHEMA_TELEGRAM, SCHEMA_SEARCH, SCHEMA_ACCOUNT];
 
 // =====================================================================
 // Provider-to-config mapping
@@ -165,6 +166,12 @@ function extractFormState(cfg) {
     : tg.allow_from?.length ? [...tg.allow_from]
     : [""];
   state["channels.telegram.token"] = tg.token || "";
+
+  const search = cfg.tools?.web?.search || {};
+  state["search.provider"] = search.provider || "tavily";
+  state["search.apiKey"] = search.apiKey || search.api_key || "";
+  state["search.baseUrl"] = search.baseUrl || search.base_url || "";
+  state["search.maxResults"] = search.maxResults ?? search.max_results ?? 5;
 
   return state;
 }
@@ -886,6 +893,16 @@ function buildConfig() {
     tgConfig.token = token;
   }
 
+  const searchConfig = {
+    provider: formState["search.provider"] || "tavily",
+    baseUrl: formState["search.baseUrl"] || "",
+    maxResults: parseInt(formState["search.maxResults"], 10) || 5,
+  };
+  const searchApiKey = formState["search.apiKey"] || "";
+  if (!isRedacted(searchApiKey)) {
+    searchConfig.apiKey = searchApiKey;
+  }
+
   const output = {
     providers: {},
     agents: {
@@ -895,6 +912,11 @@ function buildConfig() {
     },
     channels: {
       telegram: tgConfig,
+    },
+    tools: {
+      web: {
+        search: searchConfig,
+      },
     },
   };
 
