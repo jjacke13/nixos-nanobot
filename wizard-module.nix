@@ -41,7 +41,7 @@ in
         User = nanobotCfg.user;
         Group = nanobotCfg.group;
         ExecStart = "${pkgs.python3}/bin/python3 ${wizardSrc}/server.py";
-        WorkingDirectory = toString wizardSrc;
+        WorkingDirectory = "${wizardSrc}";
         Restart = "on-failure";
         RestartSec = 5;
 
