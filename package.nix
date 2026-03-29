@@ -7,14 +7,14 @@
 
 python3Packages.buildPythonPackage rec {
   pname = "nanobot-ai";
-  version = "0.1.4.post5";
+  version = "0.1.4.post6";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "HKUDS";
     repo = "nanobot";
     rev = "v${version}";
-    hash = "sha256-tz5FdPv0AGAM3OANHq+yGQ58SFgjJ5HDdD63ZU8Ml1k=";
+    hash = "sha256-oDbqkfKr55Lirwa/GHOtRq0oJc/+bEXlnRM11AmmIJE=";
   };
 
   build-system = [
@@ -42,6 +42,8 @@ python3Packages.buildPythonPackage rec {
     litellm
     pydantic
     pydantic-settings
+    anthropic
+    questionary
 
     # Networking
     websockets
